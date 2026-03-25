@@ -124,10 +124,36 @@ def ensure_infrastructure(provided_project=None, provided_bucket=None, region="u
         created = True
     
     _run_gcloud(["storage", "buckets", "update", f"gs://{target_bucket}", "--update-labels=gcspub=default"])
-    _run_gcloud(["storage", "buckets", "update", f"gs://{target_bucket}", "--public-access-prevention"])
+    
+    # 5. SECURITY BASELINE ENFORCEMENT
+    # Always enforce UBLA and audit public access during init
+    _enforce_security_baseline(target_bucket)
     
     ConfigManager.set_bucket(target_bucket)
     return {"init": {"actions": actions, "created_new_bucket": created}, "status": run_status()}
+
+def _enforce_security_baseline(bucket):
+    """Proactively enforces UBLA and audits public access for data privacy."""
+    # Always enforce Uniform Bucket Level Access
+    _run_gcloud(["storage", "buckets", "update", f"gs://{bucket}", "--uniform-bucket-level-access"])
+    
+    # Audit IAM: If public (PAP=inherited), ensure NOT using objectViewer (prevent listing)
+    try:
+        output = _run_gcloud(["storage", "buckets", "get-iam-policy", f"gs://{bucket}", "--format=json"], capture_output=True)
+        iam = json.loads(output)
+        bindings = iam.get("bindings", [])
+        
+        has_broad_listing = False
+        for b in bindings:
+            if b.get("role") == "roles/storage.objectViewer" and "allUsers" in b.get("members", []):
+                has_broad_listing = True
+                break
+        
+        if has_broad_listing:
+            # Downgrade to restrictive reader (Anti-Listing)
+            _run_gcloud(["storage", "buckets", "remove-iam-policy-binding", f"gs://{bucket}", "--member=allUsers", "--role=roles/storage.objectViewer"])
+            _run_gcloud(["storage", "buckets", "add-iam-policy-binding", f"gs://{bucket}", "--member=allUsers", "--role=roles/storage.legacyObjectReader"])
+    except Exception: pass
 
 def run_cp(args, expire=None):
     _check_deps()
@@ -178,15 +204,17 @@ def public_enable(repair=False):
     if not bucket or bucket == "Not Set": raise ConfigurationError("Not initialized.")
     
     _run_gcloud(["storage", "buckets", "update", f"gs://{bucket}", "--no-public-access-prevention"])
-    _run_gcloud(["storage", "buckets", "update", f"gs://{bucket}", "--uniform-bucket-level-access"])
+    
+    # Restrictive Role (Anti-Listing): Use legacyObjectReader instead of objectViewer
+    role = "roles/storage.legacyObjectReader"
     
     try:
-        _run_gcloud(["storage", "buckets", "add-iam-policy-binding", f"gs://{bucket}", "--member=allUsers", "--role=roles/storage.objectViewer"])
+        _run_gcloud(["storage", "buckets", "add-iam-policy-binding", f"gs://{bucket}", "--member=allUsers", f"--role={role}"])
     except subprocess.CalledProcessError as e:
         if "Domain Restricted Sharing" in str(e):
             if repair:
                 if _repair_org_policies(project):
-                    _run_gcloud(["storage", "buckets", "add-iam-policy-binding", f"gs://{bucket}", "--member=allUsers", "--role=roles/storage.objectViewer"])
+                    _run_gcloud(["storage", "buckets", "add-iam-policy-binding", f"gs://{bucket}", "--member=allUsers", f"--role={role}"])
                     return {"success": True, "repaired": True}
                 else: 
                     raise ConfigurationError("Org Policy repair failed despite explicit request.")
@@ -233,7 +261,8 @@ def run_status():
                 iam_data = json.loads(iam_output)
                 has_all_users = False
                 for binding in iam_data.get('bindings', []):
-                    if binding.get('role') == 'roles/storage.objectViewer' and 'allUsers' in binding.get('members', []):
+                    # Check for roles/storage.legacyObjectReader to prevent listing
+                    if binding.get('role') == 'roles/storage.legacyObjectReader' and 'allUsers' in binding.get('members', []):
                         has_all_users = True
                         break
                 
