@@ -133,7 +133,17 @@ def ensure_infrastructure(provided_project=None, provided_bucket=None, region="u
     return {"init": {"actions": actions, "created_new_bucket": created}, "status": run_status()}
 
 def _enforce_security_baseline(bucket):
-    """Proactively enforces UBLA and audits public access for data privacy."""
+    """
+    Proactively enforces a high-conviction security baseline for the gcspub bucket.
+    
+    This method is invoked during 'init' and 'public enable' to ensure:
+    1. Uniform Bucket Level Access (UBLA): Enforced to ensure consistent, IAM-only control.
+    2. Anti-Listing Privacy: Audits public bindings to ensure 'allUsers' ONLY has
+       'roles/storage.legacyObjectReader'. This allows direct access via known URLs
+       while explicitly blocking unauthenticated users from listing the bucket's contents.
+    3. Configuration Drift Repair: Automatically 'downgrades' overly-broad roles (like objectViewer)
+       to the hardened reader role if public access is currently enabled.
+    """
     # Always enforce Uniform Bucket Level Access
     _run_gcloud(["storage", "buckets", "update", f"gs://{bucket}", "--uniform-bucket-level-access"])
     

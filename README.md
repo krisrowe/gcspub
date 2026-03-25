@@ -14,6 +14,15 @@ While `gcloud storage` is powerful, it requires you to manually manage project c
 *   **Atomic Access Management**: Coordinately manages permissions in a single operation. It enforces **Uniform Bucket Level Access** (disabling complex per-file ACLs) and removes **Public Access Prevention** (the bucket-level safety lock), ensuring your artifacts are reliably public when you want them to be. This eliminates the "403/404 syndrome" caused by partial or inconsistent security states.
 *   **Cross-Project Auditability**: Because it uses Standard Cloud Labels, you can instantly inventory your artifact delivery endpoints across your entire GCP Organization using standard tools, without maintaining a manual inventory.
 
+## Security & Privacy: "The Anti-Listing Posture"
+
+`gcspub` is designed with a **"Direct-Access-Only"** security philosophy for public artifacts. Unlike many public buckets that allow anyone to browse and "list" your entire folder, `gcspub` hardens your bucket privacy:
+
+*   **No Bucket Listing**: When public access is enabled, `allUsers` is granted the restrictive `roles/storage.legacyObjectReader` role. This allows anyone with the direct URL (e.g., your dashboard link) to view the file, but explicitly blocks anyone from listing the bucket's contents to discover other files.
+*   **Uniform Bucket Level Access (UBLA)**: `gcspub` enforces UBLA on every bucket it manages. This replaces fragile, per-file ACLs with consistent, bucket-wide IAM policies, eliminating the "403/404 syndrome" and ensuring predictable security.
+*   **Public Access Prevention (PAP)**: The tool uses PAP as a bucket-level safety switch. It is enforced by default and only 'inherited' (toggled off) when you explicitly run `public enable`.
+*   **Automated Security Audits**: Every time `gcspub init` is run, the tool performs a proactive security scan. If it detects configuration drift—such as overly-broad roles like `objectViewer` being assigned to `allUsers`—it will automatically "downgrade" the permissions to the hardened, anti-listing reader role.
+
 ## Installation
 
 ### Directly from GitHub (Recommended)
